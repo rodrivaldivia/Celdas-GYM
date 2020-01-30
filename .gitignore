@@ -1,0 +1,41 @@
+# Eclipse
+.classpath
+.project
+.settings/
+
+# Intellij
+.idea/
+.idea
+*.iml
+*.iws
+
+# Mac
+.DS_Store
+
+# Maven
+log/
+target
+out/
+/bin
+/build/classes/
+/build/dist/
+production/
+
+*.ipr
+*.class
+
+*.html
+*.gif
+*.pyc
+
+logs/
+network/
+AgentOLD.py
+
+#Super secret folder with private games, in the privte repository
+examples/super_secret
+src/META-INF/MANIFEST.MF
+src/rs/META-INF/MANIFEST.MF
+
+.vscode/
+logs/
