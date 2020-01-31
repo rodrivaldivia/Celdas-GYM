@@ -30,16 +30,6 @@ NUM_ACTIONS = 5
 BATCH_SIZE = 20
 GAMMA = 0.8
 
-elementToFloat = {
-    '.': 0.0,
-    'w': 1.0,
-    'A': 2.0,
-    'S': 3.0,
-    'L': 4.0,
-    'e': 5.0,
-    'x': 6.0,
-}
-
 directions = {
     'ACTION_DOWN':  (1,2),
     'ACTION_UP':    (1,0),
@@ -48,7 +38,7 @@ directions = {
 }
 
 # TODO chequear
-availableActions = ['ACTION_USE', 'ACTION_DOWN', 'ACTION_UP', 'ACTION_RIGHT', 'ACTION_LEFT']
+availableActions = ['ACTION_USE', 'ACTION_UP', 'ACTION_LEFT', 'ACTION_RIGHT', 'ACTION_DOWN']
 
 class Agent():
     def __init__(self):
@@ -77,9 +67,8 @@ class Agent():
         self.currentDirection = 'ACTION_DOWN'
         self.keyPosition = None
         self.goalPosition = None
-        # for observations in sso.immovablePositions:
-        #     if observations[0].itype == 4:
-        #         self.goalPosition = observations[0].getPositionAsArray()
+        self.averageLoss = 0
+        self.averageReward = 0
 
     def _build_compile_model(self):
         # inputs = Input(shape=(9,13), name='state')
@@ -123,9 +112,6 @@ class Agent():
             self.keyPosition = self.getKeyPosition(state)
             self.exitPosition = self.getExitPosition(state)
 
-        print(state)
-        print(self.get_perception(state))
-
 
         # if(sso.gameTick%BATCH_SIZE==0):
             # print('train')
@@ -154,9 +140,9 @@ class Agent():
             q_values = self.policyNetwork.predict(tensorState)
             index = np.argmax(q_values[0])
             print('q_values: ', q_values)
-            print(state.availableActions)
-            print('Predicted Best: ', state.availableActions[index])
-            self.currentDirection = self.get_new_direction(state.availableActions[index])
+            print(availableActions)
+            print('Predicted Best: ', availableActions[index])
+            self.currentDirection = self.get_new_direction(availableActions[index])
             print('Current direction: ', self.currentDirection)
             return np.argmax(q_values[0])
         else:
@@ -166,8 +152,10 @@ class Agent():
                 return "ACTION_ESCAPE"
             else:
                 index = random.randint(0, len(availableActions) - 1)
-                self.lastAction = index
-                # print('Exploring: ', sso.availableActions[index])
+                self.lastAction = index        
+                print(state)
+                print(self.get_perception(state))
+                print('Exploring: ', availableActions[index])
                 self.currentDirection = self.get_new_direction(availableActions[index])
                 # print('Current direction: ', self.currentDirection)
                 return index
@@ -184,6 +172,8 @@ class Agent():
 
         # X = []
         # y = []
+
+        loss = 0
 
         for experience in batch:
 
@@ -206,9 +196,10 @@ class Agent():
             # Entrenamos con la prediccion vs la correccion
             X.append(tensorState)
             # y.append(target)
-            self.policyNetwork.fit(tensorState, target, verbose=0)
+            loss += self.policyNetwork.fit(tensorState, target, verbose=0)
         # self.policyNetwork.train_on_batch(X,y)
         print('done training')
+        return loss
 
 
     """
@@ -224,24 +215,38 @@ class Agent():
     * chosen will be ignored, and the game will play a random one instead.
     """
 
-    def result(self, sso, elapsedTimer):
+    def result(self, sso, gameWinner):
         print("GAME OVER")
         self.gameOver = True
         self.episode += 1
         self.policyNetwork.save_weights("./celdas/network/zelda")
         print('Model saved!')
         if self.lastAction is not None:
-            reward = self.getReward(self.lastState, sso, self.getAvatarCoordinates(sso))
-            if not sso.isAvatarAlive:
-                reward = -5000.0
+            if gameWinner == 'PLAYER_LOSES':
+                reward += -100.0
                 print('AGENT KIA')
+            elif gameWinner == 'PLAYER_WINS':
+                reward += 10000.0
             self.replayMemory.pushExperience(Experience(self.lastState, self.lastAction, reward, sso))
-            self.train()
-        # Two different levels
-        # return random.randint(0, 2)
-        print('return to lvl 0')
-        return [0]
-        print('return to lvl random')
+            loss = self.train()
+            self.averageLoss += loss
+            self.averageReward += reward
+
+        # self.episode += 1
+
+        # if self.gameOver:
+        #     self.averageLoss /= self.steps
+        #     print("Episode: {}, Reward: {}, avg loss: {}, eps: {}".format(
+        #         self.episode, self.averageReward, self.averageLoss, self.movementStrategy.epsilon))
+        #     print("Winner: {}".format(gameWinner))
+        #     with train_writer.as_default():
+        #         tf.summary.scalar(
+        #             'reward', self.averageReward, step=self.steps)
+        #         tf.summary.scalar(
+        #             'avg loss', self.averageLoss, step=self.steps)
+        # if self.episode % 10 == 0:
+        #     self.policyNetwork.save_weights("./network/zelda-ddqn.h5")
+        #     print('Model saved!')
 
 
     def getReward(self, lastState, currentState, currentPosition):
@@ -263,29 +268,29 @@ class Agent():
             return 500.0
 
         if not moved:
-            # print('DID NOT MOVE')
+            print('DID NOT MOVE')
             # print(currentState.availableActions[self.lastAction])
             if 0 < self.lastAction < NUM_ACTIONS and availableActions[self.lastAction] == 'ACTION_USE':
-                # print('BUT DID ATTACK')
+                print('BUT DID ATTACK')
                 reward = -10.0
             else:
                 if(self.switchedDirection):
-                    # print('SWITCHED DIRECTION')
+                    print('SWITCHED DIRECTION')
                     reward = 0.0
                 else:
-                    # print ('STEPPED INTO WALL')
+                    print ('STEPPED INTO WALL')
                     reward = -50.0
         # elif level[col][row] == elementToFloat['.']:
             # print ('MOVED')
             # print (self.getDistanceToGoal(currentState))
-        elif level[col][row] == elementToFloat['L']:
+        elif level[col][row] == 3.0:
             print ('FOUND KEY')
             # Found key
             self.foundKey = True
             # Set GATE as new goal
-            self.goalPosition = currentState.portalsPositions[0][0].getPositionAsArray()
+            # self.goalPosition = currentState.portalsPositions[0][0].getPositionAsArray()
             reward = 1000.0
-        elif level[col][row] == elementToFloat['S'] and self.foundKey:
+        elif level[col][row] == 2.0 and self.foundKey:
             # Won
             print('WON')
             reward = 5000.0
@@ -367,44 +372,3 @@ class Agent():
         print(level)
         print(distances)
         return [level, distances, direction]
-
-
-    def detectElement(self, o):
-        if o.category == 4:
-            if o.itype == 3:
-                return '0'
-            elif o.itype == 0:
-                return 'w'
-            elif o.itype == 4:
-                return 'L'
-            else:
-                return 'A'
-            
-             
-        elif o.category == 0:
-            if o.itype == 5:
-                return 'A'
-            elif o.itype == 6:
-                return 'B'
-            elif o.itype == 1:
-                return 'A'
-            else:
-                return 'A'
-             
-        elif o.category == 6:
-            return 'e'
-        elif o.category == 2:
-            return 'S'
-        elif o.category == 3:
-            if o.itype == 1:
-                return 'e'
-            else:         
-                return 'e'         
-        elif o.category == 5:
-            if o.itype == 5:
-                return 'x'
-            else:         
-                return 'e'
-        else:                          
-            return '?'
-        
