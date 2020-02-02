@@ -19,16 +19,13 @@ from tensorflow.keras.layers import Dense, Input, Reshape, Flatten
 
 tf.compat.v1.enable_v2_behavior()
 
-# tf.reset_default_graph()
-
 
 MEMORY_CAPACITY = 1000
-# TIMESTEPS_PER_EPISODE = 150
-STEPS_TO_UPDATE_NETWORK = 3
-MIN_REPLAY_MEMORY_SIZE = 500
+STEPS_TO_UPDATE_NETWORK = 5
+MIN_REPLAY_MEMORY_SIZE = 300
 NUM_ACTIONS = 5
-BATCH_SIZE = 20
-GAMMA = 0.8
+BATCH_SIZE = 50
+GAMMA = 0.5
 
 directions = {
     'ACTION_DOWN':  (1,2),
@@ -80,7 +77,7 @@ class Agent():
 
         model = Model(inputs=inputs, outputs=outputs, name='Zelda')
 
-        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
+        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005))
         return model
 
     def align_target_model(self):
@@ -112,19 +109,20 @@ class Agent():
             self.keyPosition = self.getKeyPosition(state)
             self.exitPosition = self.getExitPosition(state)
 
-
-        # if(sso.gameTick%BATCH_SIZE==0):
-            # print('train')
-            # self.train()
         if(self.steps % STEPS_TO_UPDATE_NETWORK == 0):    
             self.align_target_model()
 
         currentPosition = self.getAvatarCoordinates(state)
 
         if self.lastState is not None:
+            # print(self.steps)
             reward = self.getReward(self.lastState, state, currentPosition)
+            self.averageReward += reward
             # print(reward)
             self.replayMemory.pushExperience(Experience(self.lastState, self.lastAction, reward, state))
+            if(self.steps % BATCH_SIZE == 0):
+                loss = self.train()
+                self.averageLoss += loss
         
         # pprint(vars(sso))
         # print(self.get_perception(sso))
@@ -132,43 +130,41 @@ class Agent():
         self.lastState = state
         self.steps += 1
 
+        # print(state)
+
         tensorState = tf.convert_to_tensor([self.get_perception(state)])
 
-        if self.movementStrategy.shouldExploit() and not self.exploreNext:
+        if self.movementStrategy.shouldExploit():
 
             # print('Using strategy...')
             q_values = self.policyNetwork.predict(tensorState)
             index = np.argmax(q_values[0])
-            print('q_values: ', q_values)
-            print(availableActions)
-            print('Predicted Best: ', availableActions[index])
+            # print('q_values: ', q_values)
+            # print(availableActions)
+            # print('Predicted Best: ', availableActions[index])
             self.currentDirection = self.get_new_direction(availableActions[index])
-            print('Current direction: ', self.currentDirection)
+            # print('Current direction: ', self.currentDirection)
+            self.lastAction = np.argmax(q_values[0])        
             return np.argmax(q_values[0])
         else:
-            self.exploreNext = False
-            # print('Exploring...')
-            if self.steps == 3000:
-                return "ACTION_ESCAPE"
-            else:
-                index = random.randint(0, len(availableActions) - 1)
-                self.lastAction = index        
-                print(state)
-                print(self.get_perception(state))
-                print('Exploring: ', availableActions[index])
-                self.currentDirection = self.get_new_direction(availableActions[index])
-                # print('Current direction: ', self.currentDirection)
-                return index
+            index = random.randint(0, len(availableActions) - 1)
+            self.lastAction = index        
+            # print(state)
+            # print(self.get_perception(state))
+            # print('Exploring: ', availableActions[index])
+            self.currentDirection = self.get_new_direction(availableActions[index])
+            # print('Current direction: ', self.currentDirection)
+            return index
 
     def train(self):
         # print(self.replayMemory.numSamples)
         if self.replayMemory.numSamples < MIN_REPLAY_MEMORY_SIZE:
-            return
+            return 0
         batch = self.replayMemory.sample(BATCH_SIZE)
         if len(batch) < BATCH_SIZE:
-            return
+            return 0
         
-        print('start training')
+        # print('start training')
 
         # X = []
         # y = []
@@ -190,15 +186,15 @@ class Agent():
             # print('Q value before: ', target[0][experience.action])
             # print('Experience reward: ', experience.reward)
             # print('Target max: ', np.amax(t))
-            target[0][experience.action] = experience.reward + GAMMA * np.amax(t)
+            target[0][experience.actionIndex] = experience.reward + GAMMA * np.amax(t)
             # print('Q value after: ', target[0][experience.action])
-
             # Entrenamos con la prediccion vs la correccion
-            X.append(tensorState)
+            # X.append(tensorState)
             # y.append(target)
-            loss += self.policyNetwork.fit(tensorState, target, verbose=0)
+            history = self.policyNetwork.fit(tensorState, target, verbose=0)
+            loss += history.history['loss'][0]
         # self.policyNetwork.train_on_batch(X,y)
-        print('done training')
+        # print('done training, loss: {}'.format(loss))
         return loss
 
 
@@ -215,38 +211,37 @@ class Agent():
     * chosen will be ignored, and the game will play a random one instead.
     """
 
-    def result(self, sso, gameWinner):
+    def result(self, state, gameWinner):
         print("GAME OVER")
         self.gameOver = True
-        self.episode += 1
-        self.policyNetwork.save_weights("./celdas/network/zelda")
-        print('Model saved!')
         if self.lastAction is not None:
+            reward = 0
             if gameWinner == 'PLAYER_LOSES':
-                reward += -100.0
-                print('AGENT KIA')
+                reward = -100.0
+                # print('AGENT KIA')
             elif gameWinner == 'PLAYER_WINS':
-                reward += 10000.0
-            self.replayMemory.pushExperience(Experience(self.lastState, self.lastAction, reward, sso))
+                reward = 1000.0
+            self.replayMemory.pushExperience(Experience(self.lastState, self.lastAction, reward, state))
             loss = self.train()
             self.averageLoss += loss
-            self.averageReward += reward
 
-        # self.episode += 1
+        self.episode += 1
 
-        # if self.gameOver:
-        #     self.averageLoss /= self.steps
-        #     print("Episode: {}, Reward: {}, avg loss: {}, eps: {}".format(
-        #         self.episode, self.averageReward, self.averageLoss, self.movementStrategy.epsilon))
-        #     print("Winner: {}".format(gameWinner))
-        #     with train_writer.as_default():
-        #         tf.summary.scalar(
-        #             'reward', self.averageReward, step=self.steps)
-        #         tf.summary.scalar(
-        #             'avg loss', self.averageLoss, step=self.steps)
-        # if self.episode % 10 == 0:
-        #     self.policyNetwork.save_weights("./network/zelda-ddqn.h5")
-        #     print('Model saved!')
+        if self.gameOver:
+            avLoss = self.averageLoss/self.steps
+            avReward = self.averageReward/self.steps
+
+            print("Episode: {}, Reward: {}, avg loss: {}, eps: {}".format(
+                self.episode, avReward, avLoss, self.movementStrategy.epsilon))
+            print("Winner: {}".format(gameWinner))
+            # with train_writer.as_default():
+            #     tf.summary.scalar(
+            #         'reward', self.averageReward, step=self.steps)
+            #     tf.summary.scalar(
+            #         'avg loss', self.averageLoss, step=self.steps)
+        if self.episode % 10 == 0:
+            self.policyNetwork.save_weights("./network/zelda-ddqn.h5")
+            print('Model saved!')
 
 
     def getReward(self, lastState, currentState, currentPosition):
@@ -255,7 +250,7 @@ class Agent():
         row = currentPosition[1] # row
         
         deltaDistance = self.getDistanceToGoal(self.getAvatarCoordinates(lastState)) - self.getDistanceToGoal(self.getAvatarCoordinates(currentState))
-        reward = 10.0*(deltaDistance)
+        reward = 1.0*(deltaDistance)
 
         moved = deltaDistance != 0
 
@@ -265,41 +260,43 @@ class Agent():
         # if self.getNumberOfEnemies(currentState) < self.getNumberOfEnemies(lastState):
         if self.getNumberOfEnemies(currentState) < self.getNumberOfEnemies(lastState):
             print('KILLED AN ENEMY')
-            return 500.0
+            return 50.0
+
+        # Found key
+        if level[col][row] == 2.0:
+            print('FOUND KEY')
+            self.foundKey = True
+            reward = 100.0
 
         if not moved:
-            print('DID NOT MOVE')
-            # print(currentState.availableActions[self.lastAction])
+            # print('DID NOT MOVE')
+            if self.lastAction is None:
+                print('LAST ACCION IS NONE')
+                return 0
             if 0 < self.lastAction < NUM_ACTIONS and availableActions[self.lastAction] == 'ACTION_USE':
-                print('BUT DID ATTACK')
-                reward = -10.0
+                # print('BUT DID ATTACK')
+                reward = -1.0
             else:
                 if(self.switchedDirection):
-                    print('SWITCHED DIRECTION')
+                    # print('SWITCHED DIRECTION')
                     reward = 0.0
                 else:
-                    print ('STEPPED INTO WALL')
-                    reward = -50.0
+                    # print ('STEPPED INTO WALL')
+                    reward = -5.0
         # elif level[col][row] == elementToFloat['.']:
             # print ('MOVED')
             # print (self.getDistanceToGoal(currentState))
-        elif level[col][row] == 3.0:
-            print ('FOUND KEY')
-            # Found key
-            self.foundKey = True
-            # Set GATE as new goal
-            # self.goalPosition = currentState.portalsPositions[0][0].getPositionAsArray()
-            reward = 1000.0
-        elif level[col][row] == 2.0 and self.foundKey:
-            # Won
-            print('WON')
-            reward = 5000.0
+
+        # elif level[col][row] == 2.0 and self.foundKey:
+        #     # Won
+        #     print('WON')
+        #     reward = 5000.0
         # else:
-        #     print ('No entro a nignuno')
+        #     print('No entro a nignuno')
 
         # print 'level: '
         # print level[col][row]
-        print(reward)
+        # print(reward)
         return reward
     
     def getElementCoordinates(self, state, element):
@@ -319,7 +316,11 @@ class Agent():
         return result
 
     def getAvatarCoordinates(self, state):
-        return self.getElementCoordinates(state, 1.0)
+        avatar = self.getElementCoordinates(state, 1.0)
+        if avatar is not None: 
+            return self.getElementCoordinates(state, 1.0)
+        else:
+            return 
 
     def getKeyPosition(self, state):
         return self.getElementCoordinates(state, 2.0)
@@ -360,15 +361,15 @@ class Agent():
         direction[:] = 0.0
         direction[directions[self.currentDirection]] = 1.0
 
-        # level[:] = '.'
-        for ii in range(3):                   
-            for jj in range(3):
-                iiPosition = ii + avatarPosition[1] - 1 
-                jjPosition = jj + avatarPosition[0] - 1 
-                # print([jjPosition, iiPosition])
-                # print(self.getDistanceToGoal([int(jjPosition), int(iiPosition)]))
-                distances[jj][ii] = self.getDistanceToGoal([int(jjPosition), int(iiPosition)])
-                level[jj][ii] = state[iiPosition][jjPosition]
-        print(level)
-        print(distances)
+        if avatarPosition is not None:
+            for ii in range(3):                   
+                for jj in range(3):
+                    iiPosition = ii + avatarPosition[0] - 1
+                    jjPosition = jj + avatarPosition[1] - 1
+                    # print([jjPosition, iiPosition])
+                    # print(self.getDistanceToGoal([int(jjPosition), int(iiPosition)]))
+                    distances[jj][ii] = self.getDistanceToGoal([int(jjPosition), int(iiPosition)])
+                    level[jj][ii] = state[iiPosition][jjPosition]
+            # print(level)
+            # print(distances)
         return [level, distances, direction]
