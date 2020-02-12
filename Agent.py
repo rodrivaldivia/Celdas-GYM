@@ -15,17 +15,19 @@ from scipy.spatial import distance
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import Model, Sequential
-from tensorflow.keras.layers import Dense, Input, Reshape, Flatten
+from tensorflow.keras.layers import Dense, Input, Reshape, Flatten 
 
 tf.compat.v1.enable_v2_behavior()
 
 
-MEMORY_CAPACITY = 1000
-STEPS_TO_UPDATE_NETWORK = 5
-MIN_REPLAY_MEMORY_SIZE = 300
+MEMORY_CAPACITY = 5000
+MIN_REPLAY_MEMORY_SIZE = 100
+BATCH_SIZE = 60
+
 NUM_ACTIONS = 5
-BATCH_SIZE = 50
-GAMMA = 0.5
+
+STEPS_TO_UPDATE_NETWORK = 5
+GAMMA = 0.8
 
 directions = {
     'ACTION_DOWN':  (1,2),
@@ -33,6 +35,13 @@ directions = {
     'ACTION_RIGHT': (2,1),
     'ACTION_LEFT':  (0,1)
 }
+
+fashion_mnist = keras.datasets.fashion_mnist
+
+# (train_images, train_labels), (test_images, test_labels) = fashion_mnist.load_data()
+
+# print(train_images.shape)
+# print(train_labels.shape)
 
 # TODO chequear
 availableActions = ['ACTION_USE', 'ACTION_UP', 'ACTION_LEFT', 'ACTION_RIGHT', 'ACTION_DOWN']
@@ -44,8 +53,8 @@ class Agent():
         self.episode = 0
         self.policyNetwork = self._build_compile_model()
         self.targetNetwork = self._build_compile_model()
-        if self.episode == 0 and os.path.exists("./celdas/network/zelda.index"):
-            self.policyNetwork.load_weights("./celdas/network/zelda")
+        if self.episode == 0 and os.path.exists("./network/zelda.index"):
+            self.policyNetwork.load_weights("./network/zelda")
         print(self.policyNetwork.summary())
         self.exploreNext = False
 
@@ -71,13 +80,13 @@ class Agent():
         # inputs = Input(shape=(9,13), name='state')
         inputs = Input(shape=(3, 3, 3), name='state')
         x = Flatten()(inputs)
-        x = Dense(30, activation='relu')(x)
-        x = Dense(64, activation='relu')(x)
-        outputs = Dense(NUM_ACTIONS, activation='softmax')(x)
+        x = Dense(64, name='HiddenI', activation='relu')(x)
+        x = Dense(32, name='HiddenII', activation='relu')(x)
+        outputs = Dense(NUM_ACTIONS, name='ActionsOutput', activation='softmax')(x)
 
         model = Model(inputs=inputs, outputs=outputs, name='Zelda')
 
-        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005))
+        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
         return model
 
     def align_target_model(self):
@@ -160,42 +169,89 @@ class Agent():
         # print(self.replayMemory.numSamples)
         if self.replayMemory.numSamples < MIN_REPLAY_MEMORY_SIZE:
             return 0
+
         batch = self.replayMemory.sample(BATCH_SIZE)
-        if len(batch) < BATCH_SIZE:
-            return 0
+
+        rawStates = [ self.get_perception(val.state) for val in batch ]
+
+        states = tf.convert_to_tensor(rawStates, dtype=tf.float32)
+        actions = np.array([val.actionIndex for val in batch])
+        rewards = np.array([val.reward for val in batch])
+
+        emptyState = np.ndarray((3,3))
+        emptyState[:] = 0.0
+
+        rawNextStates = [ emptyState if val.nextState is None else self.get_perception(val.state) for val in batch ] 
+
+        nextStates = tf.convert_to_tensor(rawNextStates, dtype=tf.float32)
+
+        # predict Q(s,a) given the batch of states
+        prim_qt = self.policyNetwork(states)
+        # predict Q(s',a') from the evaluation network
+        prim_qtp1 = self.policyNetwork(nextStates)
+        # copy the prim_qt into the target_q tensor - we then will update one index corresponding to the max action
+        target_q = prim_qt.numpy()
+        updates = rewards
+        valid_idxs = np.array(nextStates).sum(axis=3).sum(axis=2).sum(axis=1) != 0
+        batch_idxs = np.arange(BATCH_SIZE)
+        # print('valid_idxs')
+        # print(np.array(nextStates).sum(axis=3).sum(axis=2).sum(axis=1))
+        # print(valid_idxs)
+        # print(batch_idxs)
+
+        prim_action_tp1 = np.argmax(prim_qtp1.numpy(), axis=1)
+        q_from_target = self.targetNetwork(nextStates)
+        # print(batch_idxs[valid_idxs])
+        # print(q_from_target.numpy()[batch_idxs[valid_idxs]])
+
+        updates[valid_idxs] += GAMMA * q_from_target.numpy()[batch_idxs[valid_idxs],
+                                                             prim_action_tp1[valid_idxs]]
+        target_q[batch_idxs, actions] = updates
+        loss = self.policyNetwork.train_on_batch(states, target_q)
+        return loss
+
+
+        # batch = self.replayMemory.sample(BATCH_SIZE)
+        # if len(batch) < BATCH_SIZE:
+        #     return 0
         
-        # print('start training')
+        # # print('start training')
 
-        # X = []
-        # y = []
+        # X = np.empty()
+        # y = np.empty()
 
-        loss = 0
+        # loss = 0
 
-        for experience in batch:
+        # for experience in batch:
 
-            tensorState = tf.convert_to_tensor([self.get_perception(experience.state)])
-            tensorNextState = tf.convert_to_tensor([self.get_perception(experience.nextState)])
+        #     tensorState = tf.convert_to_tensor([self.get_perception(experience.state)])
+        #     tensorNextState = tf.convert_to_tensor([self.get_perception(experience.nextState)])
 
-            # print(self.get_perception(experience.state))
-            # Intentamos predecir la mejor accion
-            target = self.policyNetwork.predict(tensorState)
-            t = self.targetNetwork.predict(tensorNextState)
-            # Para la accion que hicimos corregimos el Q-Value
-            # print('Policy prediction: ', target)
-            # print('Target prediction: ', t)
-            # print('Q value before: ', target[0][experience.action])
-            # print('Experience reward: ', experience.reward)
-            # print('Target max: ', np.amax(t))
-            target[0][experience.actionIndex] = experience.reward + GAMMA * np.amax(t)
-            # print('Q value after: ', target[0][experience.action])
-            # Entrenamos con la prediccion vs la correccion
-            # X.append(tensorState)
-            # y.append(target)
-            history = self.policyNetwork.fit(tensorState, target, verbose=0)
-            loss += history.history['loss'][0]
+        #     # print(self.get_perception(experience.state))
+        #     # Intentamos predecir la mejor accion
+        #     target = self.policyNetwork.predict(tensorState)
+        #     t = self.targetNetwork.predict(tensorNextState)
+        #     # Para la accion que hicimos corregimos el Q-Value
+        #     # print('Policy prediction: ', target)
+        #     # print('Target prediction: ', t)
+        #     # print('Q value before: ', target[0][experience.action])
+        #     # print('Experience reward: ', experience.reward)
+        #     # print('Target max: ', np.amax(t))
+        #     target[0][experience.actionIndex] = experience.reward + GAMMA * np.amax(t)
+        #     # print('Q value after: ', target[0][experience.action])
+        #     # Entrenamos con la prediccion vs la correccion
+        #     X.append(tensorState)
+        #     y.append(target)
+        #     # history = self.policyNetwork.fit(tensorState, target, verbose=0)
+        #     # loss += history.history['loss'][0]
+
+        # print(X.shape)
+        # print(y.shape)
+        # history = self.policyNetwork.fit(X, y, verbose=0)
+        # return history.history['loss'][0]
         # self.policyNetwork.train_on_batch(X,y)
         # print('done training, loss: {}'.format(loss))
-        return loss
+        # return loss
 
 
     """
@@ -250,7 +306,7 @@ class Agent():
         row = currentPosition[1] # row
         
         deltaDistance = self.getDistanceToGoal(self.getAvatarCoordinates(lastState)) - self.getDistanceToGoal(self.getAvatarCoordinates(currentState))
-        reward = 1.0*(deltaDistance)
+        reward = 1.0*(deltaDistance) - 3.0
 
         moved = deltaDistance != 0
 
@@ -279,10 +335,10 @@ class Agent():
             else:
                 if(self.switchedDirection):
                     # print('SWITCHED DIRECTION')
-                    reward = 0.0
+                    reward = -10.0
                 else:
                     # print ('STEPPED INTO WALL')
-                    reward = -5.0
+                    reward = -15.0
         # elif level[col][row] == elementToFloat['.']:
             # print ('MOVED')
             # print (self.getDistanceToGoal(currentState))

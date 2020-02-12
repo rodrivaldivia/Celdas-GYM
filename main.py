@@ -9,7 +9,7 @@ from Agent import Agent
 
 tf.compat.v1.enable_v2_behavior()
 
-num_episodes = 1000  # @param {type:"integer"}
+num_episodes = 300  # @param {type:"integer"}
 num_steps = 3000  # @param {type:"integer"}
 render = True  # @param {type:"boolean"}
 
