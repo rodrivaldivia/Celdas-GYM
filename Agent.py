@@ -21,13 +21,13 @@ tf.compat.v1.enable_v2_behavior()
 
 
 MEMORY_CAPACITY = 5000
-MIN_REPLAY_MEMORY_SIZE = 100
+MIN_REPLAY_MEMORY_SIZE = 1000
 BATCH_SIZE = 60
 
 NUM_ACTIONS = 5
 
 STEPS_TO_UPDATE_NETWORK = 5
-GAMMA = 0.8
+GAMMA = 0.5
 
 directions = {
     'ACTION_DOWN':  (1,2),
@@ -35,13 +35,6 @@ directions = {
     'ACTION_RIGHT': (2,1),
     'ACTION_LEFT':  (0,1)
 }
-
-fashion_mnist = keras.datasets.fashion_mnist
-
-# (train_images, train_labels), (test_images, test_labels) = fashion_mnist.load_data()
-
-# print(train_images.shape)
-# print(train_labels.shape)
 
 # TODO chequear
 availableActions = ['ACTION_USE', 'ACTION_UP', 'ACTION_LEFT', 'ACTION_RIGHT', 'ACTION_DOWN']
@@ -86,7 +79,7 @@ class Agent():
 
         model = Model(inputs=inputs, outputs=outputs, name='Zelda')
 
-        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
+        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.01))
         return model
 
     def align_target_model(self):
@@ -322,7 +315,7 @@ class Agent():
         if level[col][row] == 2.0:
             print('FOUND KEY')
             self.foundKey = True
-            reward = 100.0
+            return 100.0
 
         if not moved:
             # print('DID NOT MOVE')
@@ -339,20 +332,6 @@ class Agent():
                 else:
                     # print ('STEPPED INTO WALL')
                     reward = -15.0
-        # elif level[col][row] == elementToFloat['.']:
-            # print ('MOVED')
-            # print (self.getDistanceToGoal(currentState))
-
-        # elif level[col][row] == 2.0 and self.foundKey:
-        #     # Won
-        #     print('WON')
-        #     reward = 5000.0
-        # else:
-        #     print('No entro a nignuno')
-
-        # print 'level: '
-        # print level[col][row]
-        # print(reward)
         return reward
     
     def getElementCoordinates(self, state, element):
