@@ -17,6 +17,8 @@ from tensorflow import keras
 from tensorflow.keras import Model, Sequential
 from tensorflow.keras.layers import Dense, Input, Reshape, Flatten 
 
+import matplotlib.pyplot as plt
+
 tf.compat.v1.enable_v2_behavior()
 
 
@@ -27,7 +29,7 @@ BATCH_SIZE = 60
 NUM_ACTIONS = 5
 
 STEPS_TO_UPDATE_NETWORK = 5
-GAMMA = 0.5
+GAMMA = 0.8
 
 directions = {
     'ACTION_DOWN':  (1,2),
@@ -36,8 +38,16 @@ directions = {
     'ACTION_LEFT':  (0,1)
 }
 
+
+# 0 -> NONE
+# 1 -> attack
+# 2 -> left
+# 3 -> right
+# 4 -> down
+# 5 -> up
+
 # TODO chequear
-availableActions = ['ACTION_USE', 'ACTION_UP', 'ACTION_LEFT', 'ACTION_RIGHT', 'ACTION_DOWN']
+availableActions = ['ACTION_USE', 'ACTION_LEFT', 'ACTION_RIGHT', 'ACTION_DOWN', 'ACTION_UP']
 
 class Agent():
     def __init__(self):
@@ -46,10 +56,16 @@ class Agent():
         self.episode = 0
         self.policyNetwork = self._build_compile_model()
         self.targetNetwork = self._build_compile_model()
-        if self.episode == 0 and os.path.exists("./network/zelda.index"):
-            self.policyNetwork.load_weights("./network/zelda")
+        if os.path.exists("./network/zelda-ddqn.h5"):
+            print('Cargamos red')
+            self.policyNetwork.load_weights("./network/zelda-ddqn.h5")
         print(self.policyNetwork.summary())
         self.exploreNext = False
+        self.steps = 0
+        self.averageLoss = 0
+        self.averageReward = 0
+        self.losses = []
+        self.rewards = []
 
     """
     * Public method to be called at the start of every level of a game.
@@ -59,27 +75,24 @@ class Agent():
     def init(self):   
         self.lastState = None
         self.lastAction = None
-        self.steps = 0
         self.align_target_model()
         self.foundKey = False
         self.switchedDirection = False
         self.currentDirection = 'ACTION_DOWN'
         self.keyPosition = None
         self.goalPosition = None
-        self.averageLoss = 0
-        self.averageReward = 0
 
     def _build_compile_model(self):
         # inputs = Input(shape=(9,13), name='state')
         inputs = Input(shape=(3, 3, 3), name='state')
         x = Flatten()(inputs)
-        x = Dense(64, name='HiddenI', activation='relu')(x)
-        x = Dense(32, name='HiddenII', activation='relu')(x)
-        outputs = Dense(NUM_ACTIONS, name='ActionsOutput', activation='softmax')(x)
+        # x = Dense(64, name='HiddenI', activation='relu')(x)
+        x = Dense(100, name='HiddenII', activation='softmax')(x)
+        outputs = Dense(NUM_ACTIONS, name='ActionsOutput', activation='relu')(x)
 
         model = Model(inputs=inputs, outputs=outputs, name='Zelda')
 
-        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.01))
+        model.compile(loss='mse', optimizer=tf.keras.optimizers.Adam(learning_rate=0.001))
         return model
 
     def align_target_model(self):
@@ -135,6 +148,8 @@ class Agent():
         # print(state)
 
         tensorState = tf.convert_to_tensor([self.get_perception(state)])
+        
+        index = 0
 
         if self.movementStrategy.shouldExploit():
 
@@ -146,17 +161,17 @@ class Agent():
             # print('Predicted Best: ', availableActions[index])
             self.currentDirection = self.get_new_direction(availableActions[index])
             # print('Current direction: ', self.currentDirection)
-            self.lastAction = np.argmax(q_values[0])        
-            return np.argmax(q_values[0])
+            self.lastAction = np.argmax(q_values[0]) 
         else:
-            index = random.randint(0, len(availableActions) - 1)
+            index = random.randint(0, len(availableActions) -1)
             self.lastAction = index        
             # print(state)
             # print(self.get_perception(state))
             # print('Exploring: ', availableActions[index])
             self.currentDirection = self.get_new_direction(availableActions[index])
             # print('Current direction: ', self.currentDirection)
-            return index
+        # print(index+1)
+        return index + 1
 
     def train(self):
         # print(self.replayMemory.numSamples)
@@ -266,10 +281,10 @@ class Agent():
         if self.lastAction is not None:
             reward = 0
             if gameWinner == 'PLAYER_LOSES':
-                reward = -100.0
+                reward = -50.0
                 # print('AGENT KIA')
             elif gameWinner == 'PLAYER_WINS':
-                reward = 1000.0
+                reward = 50000.0
             self.replayMemory.pushExperience(Experience(self.lastState, self.lastAction, reward, state))
             loss = self.train()
             self.averageLoss += loss
@@ -278,7 +293,9 @@ class Agent():
 
         if self.gameOver:
             avLoss = self.averageLoss/self.steps
+            self.losses.append(avLoss)
             avReward = self.averageReward/self.steps
+            self.rewards.append(avReward)
 
             print("Episode: {}, Reward: {}, avg loss: {}, eps: {}".format(
                 self.episode, avReward, avLoss, self.movementStrategy.epsilon))
@@ -292,6 +309,16 @@ class Agent():
             self.policyNetwork.save_weights("./network/zelda-ddqn.h5")
             print('Model saved!')
 
+    def plot(self):
+        xLoss = range(len(self.losses))
+        plt.plot(xLoss, self.losses, label='Loss')
+        # xRewards = range(len(self.rewards))
+        # plt.plot(xRewards, self.rewards, label='Reward')
+        plt.xlabel('Episodios')
+        # plt.ylabel('')
+        plt.title("Resultados")
+        plt.legend()
+        plt.show()
 
     def getReward(self, lastState, currentState, currentPosition):
         level = lastState
@@ -299,7 +326,7 @@ class Agent():
         row = currentPosition[1] # row
         
         deltaDistance = self.getDistanceToGoal(self.getAvatarCoordinates(lastState)) - self.getDistanceToGoal(self.getAvatarCoordinates(currentState))
-        reward = 1.0*(deltaDistance) - 3.0
+        reward = 1.0*(deltaDistance)
 
         moved = deltaDistance != 0
 
@@ -309,29 +336,29 @@ class Agent():
         # if self.getNumberOfEnemies(currentState) < self.getNumberOfEnemies(lastState):
         if self.getNumberOfEnemies(currentState) < self.getNumberOfEnemies(lastState):
             print('KILLED AN ENEMY')
-            return 50.0
+            return 500.0
 
         # Found key
         if level[col][row] == 2.0:
             print('FOUND KEY')
             self.foundKey = True
-            return 100.0
+            return 10000.0
 
         if not moved:
             # print('DID NOT MOVE')
             if self.lastAction is None:
-                print('LAST ACCION IS NONE')
-                return 0
+                # print('LAST ACCION IS NONE')
+                return -10.0
             if 0 < self.lastAction < NUM_ACTIONS and availableActions[self.lastAction] == 'ACTION_USE':
                 # print('BUT DID ATTACK')
-                reward = -1.0
+                reward = -5.0
             else:
                 if(self.switchedDirection):
                     # print('SWITCHED DIRECTION')
                     reward = -10.0
                 else:
                     # print ('STEPPED INTO WALL')
-                    reward = -15.0
+                    reward = -20.0
         return reward
     
     def getElementCoordinates(self, state, element):

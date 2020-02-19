@@ -7,7 +7,8 @@ MIN_EPSILON = 0.01
 class EpsilonStrategy():
     def __init__(self):
         self.epsilon = 1
-        self.epsilonDecreaseRate = 0.00001
+        # self.epsilonDecreaseRate = 0.02
+        self.epsilonDecreaseRate = 0.000002
 
     def __str__(self):
         return str(self.__class__) + ": " + str(self.__dict__)

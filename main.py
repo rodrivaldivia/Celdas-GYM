@@ -9,7 +9,7 @@ from Agent import Agent
 
 tf.compat.v1.enable_v2_behavior()
 
-num_episodes = 5000  # @param {type:"integer"}
+num_episodes = 500  # @param {type:"integer"}
 num_steps = 2000  # @param {type:"integer"}
 render = True  # @param {type:"boolean"}
 
@@ -65,3 +65,5 @@ for i in range(num_episodes):  # testing 100 times
             agent.result(state, debug['winner'])
             print("Game over at game tick " + str(step+1) + " with player " + debug['winner'])
             break
+
+agent.plot()
